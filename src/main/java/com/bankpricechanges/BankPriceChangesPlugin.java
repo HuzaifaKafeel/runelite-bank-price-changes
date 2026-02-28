@@ -79,6 +79,7 @@ public class BankPriceChangesPlugin extends Plugin
     private ScheduledExecutorService executor;
     private Instant lastFetch = Instant.EPOCH;
     private NavigationButton navButton;
+    private ItemContainer bankContainer;
 
     @Provides
     BankPriceChangesConfig provideConfig(ConfigManager configManager)
@@ -119,17 +120,32 @@ public class BankPriceChangesPlugin extends Plugin
     {
         if (event.getContainerId() == InventoryID.BANK.getId())
         {
-            ItemContainer container = event.getItemContainer();
-            bankItemIds.clear();
-            for (Item item : container.getItems())
-            {
-                if (item.getId() >= 0)
-                {
-                    bankItemIds.add(itemManager.canonicalize(item.getId()));
-                }
-            }
+            bankContainer = event.getItemContainer();
+            rescanBank();
             log.info("Bank container changed ({} unique items), triggering price refresh", bankItemIds.size());
             refreshIfStale();
+        }
+    }
+
+    void rescanBank()
+    {
+        if (bankContainer == null)
+        {
+            return;
+        }
+        bankItemIds.clear();
+        for (Item item : bankContainer.getItems())
+        {
+            if (item.getId() < 0)
+            {
+                continue;
+            }
+            if (!config.includePlaceholders()
+                    && itemManager.getItemComposition(item.getId()).getPlaceholderTemplateId() != -1)
+            {
+                continue;
+            }
+            bankItemIds.add(itemManager.canonicalize(item.getId()));
         }
     }
 
@@ -207,10 +223,25 @@ public class BankPriceChangesPlugin extends Plugin
     @Subscribe
     public void onConfigChanged(ConfigChanged event)
     {
-        if ("bankpricechanges".equals(event.getGroup()) && "timePeriod".equals(event.getKey()))
+        if (!"bankpricechanges".equals(event.getGroup()))
         {
-            lastFetch = Instant.EPOCH;
-            refreshIfStale();
+            return;
+        }
+        SwingUtilities.invokeLater(() -> panel.syncFromConfig());
+        switch (event.getKey())
+        {
+            case "timePeriod":
+                lastFetch = Instant.EPOCH;
+                refreshIfStale();
+                break;
+            case "includePlaceholders":
+                clientThread.invokeLater(() ->
+                {
+                    rescanBank();
+                    lastFetch = Instant.EPOCH;
+                    refreshIfStale();
+                });
+                break;
         }
     }
 

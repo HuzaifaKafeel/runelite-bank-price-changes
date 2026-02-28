@@ -28,6 +28,12 @@ public class BankPriceChangesOverlay extends WidgetItemOverlay
     @Override
     public void renderItemOverlay(Graphics2D graphics, int itemId, WidgetItem widgetItem)
     {
+        if (!config.includePlaceholders()
+                && itemManager.getItemComposition(itemId).getPlaceholderTemplateId() != -1)
+        {
+            return;
+        }
+
         PriceData data = plugin.getPriceChange(itemManager.canonicalize(itemId));
         if (data == null)
         {
@@ -35,6 +41,11 @@ public class BankPriceChangesOverlay extends WidgetItemOverlay
         }
 
         if (Math.abs(data.getChangePct()) < config.minThreshold())
+        {
+            return;
+        }
+
+        if (Math.abs(data.getChange()) < config.minGpThreshold())
         {
             return;
         }

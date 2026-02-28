@@ -93,4 +93,24 @@ public interface BankPriceChangesConfig extends Config
     {
         return PanelItemCount.FIVE;
     }
+
+    @ConfigItem(
+        keyName = "includePlaceholders",
+        name = "Include Placeholders",
+        description = "Show price changes for bank placeholder items"
+    )
+    default boolean includePlaceholders()
+    {
+        return true;
+    }
+
+    @ConfigItem(
+        keyName = "minGpThreshold",
+        name = "Minimum Change (GP)",
+        description = "Only show overlay on items with at least this GP change (absolute value)"
+    )
+    default int minGpThreshold()
+    {
+        return 0;
+    }
 }
