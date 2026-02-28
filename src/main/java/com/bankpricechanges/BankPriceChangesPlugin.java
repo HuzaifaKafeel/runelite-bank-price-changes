@@ -160,7 +160,7 @@ public class BankPriceChangesPlugin extends Plugin
         {
             try
             {
-                Map<Integer, PriceData> data = wikiPriceClient.fetchPriceChanges(config.timePeriod());
+                Map<Integer, PriceData> data = wikiPriceClient.fetchPriceChanges(config.timePeriod(), bankItemIds);
                 priceChanges.clear();
                 priceChanges.putAll(data);
                 log.info("Fetched price data for {} items", data.size());

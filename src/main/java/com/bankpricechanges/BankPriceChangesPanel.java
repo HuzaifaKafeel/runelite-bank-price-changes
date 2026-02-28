@@ -47,6 +47,8 @@ public class BankPriceChangesPanel extends PluginPanel
     private JButton tenBtn;
     private JButton fiveMinBtn;
     private JButton oneHourBtn;
+    private JButton sixHourBtn;
+    private JButton twentyFourHourBtn;
     private JButton placeholderBtn;
     private JTextField minPctField;
     private JTextField minGpField;
@@ -131,6 +133,8 @@ public class BankPriceChangesPanel extends PluginPanel
         // ── Row 2: Time period and placeholder toggle ──────────
         fiveMinBtn = makeControlButton("5m");
         oneHourBtn = makeControlButton("1h");
+        sixHourBtn = makeControlButton("6h");
+        twentyFourHourBtn = makeControlButton("24h");
         placeholderBtn = makeControlButton("PH \u2713");
         placeholderBtn.setToolTipText("Include bank placeholder items");
 
@@ -150,6 +154,22 @@ public class BankPriceChangesPanel extends PluginPanel
                     BankPriceChangesConfig.TimePeriod.ONE_HOUR);
             }
         });
+        sixHourBtn.addActionListener(e ->
+        {
+            if (!syncingFromConfig)
+            {
+                configManager.setConfiguration(CONFIG_GROUP, "timePeriod",
+                    BankPriceChangesConfig.TimePeriod.SIX_HOURS);
+            }
+        });
+        twentyFourHourBtn.addActionListener(e ->
+        {
+            if (!syncingFromConfig)
+            {
+                configManager.setConfiguration(CONFIG_GROUP, "timePeriod",
+                    BankPriceChangesConfig.TimePeriod.TWENTY_FOUR_HOURS);
+            }
+        });
         placeholderBtn.addActionListener(e ->
         {
             if (!syncingFromConfig)
@@ -160,7 +180,7 @@ public class BankPriceChangesPanel extends PluginPanel
         });
 
         JPanel timePHRow = makeControlRow(
-            new JComponent[]{fiveMinBtn, oneHourBtn},
+            new JComponent[]{fiveMinBtn, oneHourBtn, sixHourBtn, twentyFourHourBtn},
             new JComponent[]{placeholderBtn}
         );
 
@@ -402,6 +422,10 @@ public class BankPriceChangesPanel extends PluginPanel
         fiveMinBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.FIVE_MIN
             ? Color.WHITE : Color.GRAY);
         oneHourBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.ONE_HOUR
+            ? Color.WHITE : Color.GRAY);
+        sixHourBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.SIX_HOURS
+            ? Color.WHITE : Color.GRAY);
+        twentyFourHourBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.TWENTY_FOUR_HOURS
             ? Color.WHITE : Color.GRAY);
     }
 
