@@ -45,9 +45,8 @@ public class BankPriceChangesPanel extends PluginPanel
     private JButton gpBtn;
     private JButton fiveBtn;
     private JButton tenBtn;
+    private JButton fiveMinBtn;
     private JButton oneHourBtn;
-    private JButton sixHourBtn;
-    private JButton twentyFourHourBtn;
     private JButton placeholderBtn;
     private JTextField minPctField;
     private JTextField minGpField;
@@ -130,34 +129,25 @@ public class BankPriceChangesPanel extends PluginPanel
         JPanel sortRow = makeControlRow(new JComponent[]{pctBtn, gpBtn}, new JComponent[]{fiveBtn, tenBtn});
 
         // ── Row 2: Time period and placeholder toggle ──────────
-        oneHourBtn = makeControlButton("1H");
-        sixHourBtn = makeControlButton("6H");
-        twentyFourHourBtn = makeControlButton("24H");
+        fiveMinBtn = makeControlButton("5m");
+        oneHourBtn = makeControlButton("1h");
         placeholderBtn = makeControlButton("PH \u2713");
         placeholderBtn.setToolTipText("Include bank placeholder items");
 
+        fiveMinBtn.addActionListener(e ->
+        {
+            if (!syncingFromConfig)
+            {
+                configManager.setConfiguration(CONFIG_GROUP, "timePeriod",
+                    BankPriceChangesConfig.TimePeriod.FIVE_MIN);
+            }
+        });
         oneHourBtn.addActionListener(e ->
         {
             if (!syncingFromConfig)
             {
                 configManager.setConfiguration(CONFIG_GROUP, "timePeriod",
                     BankPriceChangesConfig.TimePeriod.ONE_HOUR);
-            }
-        });
-        sixHourBtn.addActionListener(e ->
-        {
-            if (!syncingFromConfig)
-            {
-                configManager.setConfiguration(CONFIG_GROUP, "timePeriod",
-                    BankPriceChangesConfig.TimePeriod.SIX_HOURS);
-            }
-        });
-        twentyFourHourBtn.addActionListener(e ->
-        {
-            if (!syncingFromConfig)
-            {
-                configManager.setConfiguration(CONFIG_GROUP, "timePeriod",
-                    BankPriceChangesConfig.TimePeriod.TWENTY_FOUR_HOURS);
             }
         });
         placeholderBtn.addActionListener(e ->
@@ -170,7 +160,7 @@ public class BankPriceChangesPanel extends PluginPanel
         });
 
         JPanel timePHRow = makeControlRow(
-            new JComponent[]{oneHourBtn, sixHourBtn, twentyFourHourBtn},
+            new JComponent[]{fiveMinBtn, oneHourBtn},
             new JComponent[]{placeholderBtn}
         );
 
@@ -358,6 +348,10 @@ public class BankPriceChangesPanel extends PluginPanel
         minPctField.setText(String.valueOf(config.minThreshold()));
         minGpField.setText(String.valueOf(config.minGpThreshold()));
         syncingFromConfig = false;
+        if (!allEntries.isEmpty())
+        {
+            rebuild();
+        }
     }
 
     // ── Appearance updaters ───────────────────────────────────
@@ -405,11 +399,9 @@ public class BankPriceChangesPanel extends PluginPanel
     private void updateTimePeriodButtons()
     {
         BankPriceChangesConfig.TimePeriod current = config.timePeriod();
+        fiveMinBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.FIVE_MIN
+            ? Color.WHITE : Color.GRAY);
         oneHourBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.ONE_HOUR
-            ? Color.WHITE : Color.GRAY);
-        sixHourBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.SIX_HOURS
-            ? Color.WHITE : Color.GRAY);
-        twentyFourHourBtn.setForeground(current == BankPriceChangesConfig.TimePeriod.TWENTY_FOUR_HOURS
             ? Color.WHITE : Color.GRAY);
     }
 
@@ -440,6 +432,8 @@ public class BankPriceChangesPanel extends PluginPanel
 
         allEntries.stream()
             .filter(e -> showGainers ? e.priceData.getChange() >= 0 : e.priceData.getChange() < 0)
+            .filter(e -> Math.abs(e.priceData.getChangePct()) >= config.minThreshold())
+            .filter(e -> Math.abs(e.priceData.getChange()) >= config.minGpThreshold())
             .sorted(comparator)
             .limit(displayCount)
             .forEach(e -> itemListPanel.add(buildRow(e)));

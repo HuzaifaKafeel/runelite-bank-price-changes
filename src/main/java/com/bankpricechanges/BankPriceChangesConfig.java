@@ -16,9 +16,8 @@ public interface BankPriceChangesConfig extends Config
 
     enum TimePeriod
     {
-        ONE_HOUR("1 Hour"),
-        SIX_HOURS("6 Hours"),
-        TWENTY_FOUR_HOURS("24 Hours");
+        FIVE_MIN("5m"),
+        ONE_HOUR("1h");
 
         private final String name;
 
@@ -51,7 +50,7 @@ public interface BankPriceChangesConfig extends Config
     )
     default double minThreshold()
     {
-        return 1.0;
+        return 0.0;
     }
 
     @ConfigItem(
@@ -61,7 +60,7 @@ public interface BankPriceChangesConfig extends Config
     )
     default TimePeriod timePeriod()
     {
-        return TimePeriod.TWENTY_FOUR_HOURS;
+        return TimePeriod.ONE_HOUR;
     }
 
     enum PanelItemCount

@@ -26,6 +26,13 @@ public class WikiPriceClient
         this.httpClient = httpClient;
     }
 
+    /**
+     * Fetches bulk price change data using two requests:
+     * <ul>
+     *   <li>{@code /latest} — current buy/sell prices for all items</li>
+     *   <li>{@code /5m} or {@code /1h} — rolling-average baseline for the chosen period</li>
+     * </ul>
+     */
     public Map<Integer, PriceData> fetchPriceChanges(BankPriceChangesConfig.TimePeriod timePeriod)
     {
         Map<Integer, PriceData> result = new HashMap<>();
@@ -38,10 +45,8 @@ public class WikiPriceClient
                 return result;
             }
 
-            String historicalEndpoint = getHistoricalEndpoint(timePeriod);
-            String historicalUrl = BASE_URL + "/" + historicalEndpoint;
-
-            JsonObject historicalData = fetchJson(historicalUrl);
+            String historicalEndpoint = timePeriod == BankPriceChangesConfig.TimePeriod.FIVE_MIN ? "5m" : "1h";
+            JsonObject historicalData = fetchJson(BASE_URL + "/" + historicalEndpoint);
             if (historicalData == null || !historicalData.has("data"))
             {
                 return result;
@@ -92,27 +97,12 @@ public class WikiPriceClient
         return result;
     }
 
-    private String getHistoricalEndpoint(BankPriceChangesConfig.TimePeriod timePeriod)
-    {
-        switch (timePeriod)
-        {
-            case ONE_HOUR:
-                return "5m";
-            case SIX_HOURS:
-                return "1h";
-            case TWENTY_FOUR_HOURS:
-            default:
-                return "1h";
-        }
-    }
-
     private int getAveragePrice(JsonObject priceObj)
     {
         Integer high = getIntOrNull(priceObj, "high");
         Integer low = getIntOrNull(priceObj, "low");
 
-        // For the /latest endpoint, fields are "high" and "low"
-        // For the /1h and /5m endpoints, fields are "avgHighPrice" and "avgLowPrice"
+        // /latest uses "high"/"low"; /5m and /1h use "avgHighPrice"/"avgLowPrice"
         if (high == null)
         {
             high = getIntOrNull(priceObj, "avgHighPrice");
