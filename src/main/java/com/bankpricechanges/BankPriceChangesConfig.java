@@ -63,4 +63,34 @@ public interface BankPriceChangesConfig extends Config
     {
         return TimePeriod.TWENTY_FOUR_HOURS;
     }
+
+    enum PanelItemCount
+    {
+        FIVE(5),
+        TEN(10);
+
+        final int count;
+
+        PanelItemCount(int count)
+        {
+            this.count = count;
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.valueOf(count);
+        }
+    }
+
+    @ConfigItem(
+        keyName = "panelItemCount",
+        name = "Panel Item Count",
+        description = "Top items shown in the side panel",
+        position = 3
+    )
+    default PanelItemCount panelItemCount()
+    {
+        return PanelItemCount.FIVE;
+    }
 }
