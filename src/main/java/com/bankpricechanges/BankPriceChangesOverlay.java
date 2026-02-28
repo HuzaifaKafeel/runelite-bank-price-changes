@@ -39,8 +39,8 @@ public class BankPriceChangesOverlay extends WidgetItemOverlay
             return;
         }
 
-        String text = formatChange(data, config.displayMode());
         Color color = data.getChange() >= 0 ? Color.GREEN : Color.RED;
+        String sign = data.getChange() >= 0 ? "+" : "";
 
         Rectangle bounds = widgetItem.getCanvasBounds();
         int x = bounds.x + 1;
@@ -48,11 +48,24 @@ public class BankPriceChangesOverlay extends WidgetItemOverlay
 
         graphics.setFont(FontManager.getRunescapeSmallFont());
 
-        // Black shadow for readability
+        if (config.displayMode() == BankPriceChangesConfig.DisplayMode.BOTH)
+        {
+            String gpText  = sign + PriceFormatter.formatGp(data.getChange());
+            String pctText = sign + String.format("%.1f%%", data.getChangePct());
+            int lineHeight = graphics.getFontMetrics().getHeight();
+            drawText(graphics, gpText, color, x, y);
+            drawText(graphics, pctText, color, x, y - lineHeight);
+        }
+        else
+        {
+            drawText(graphics, formatChange(data, config.displayMode()), color, x, y);
+        }
+    }
+
+    private void drawText(Graphics2D graphics, String text, Color color, int x, int y)
+    {
         graphics.setColor(Color.BLACK);
         graphics.drawString(text, x + 1, y + 1);
-
-        // Colored text on top
         graphics.setColor(color);
         graphics.drawString(text, x, y);
     }

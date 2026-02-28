@@ -18,6 +18,9 @@ import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import okhttp3.OkHttpClient;
 
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.game.ItemMapping;
+
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import java.awt.Color;
@@ -26,13 +29,14 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.stream.Collectors;
 
 @Slf4j
 @PluginDescriptor(
@@ -147,13 +151,43 @@ public class BankPriceChangesPlugin extends Plugin
 
                 clientThread.invokeLater(() ->
                 {
-                    List<BankPriceChangesPanel.PanelItemEntry> entries = data.entrySet().stream()
-                        .filter(e -> bankItemIds.contains(e.getKey()))
-                        .map(e -> new BankPriceChangesPanel.PanelItemEntry(
-                            e.getKey(),
-                            itemManager.getItemComposition(e.getKey()).getName(),
-                            e.getValue()))
-                        .collect(Collectors.toList());
+                    List<BankPriceChangesPanel.PanelItemEntry> entries = new ArrayList<>();
+                    for (Integer bankId : bankItemIds)
+                    {
+                        PriceData priceData = data.get(bankId);
+                        if (priceData == null)
+                        {
+                            // Resolve untradeable via RuneLite's ItemMapping table
+                            // e.g. Ferocious Gloves → Hydra Leather, Scorching Bow → Tormented Synapse
+                            Collection<ItemMapping> mappings = ItemMapping.map(bankId);
+                            if (mappings == null)
+                            {
+                                continue;
+                            }
+                            long currentTotal = 0;
+                            long previousTotal = 0;
+                            boolean allFound = true;
+                            for (ItemMapping mapping : mappings)
+                            {
+                                PriceData component = data.get(mapping.getTradeableItem());
+                                if (component == null)
+                                {
+                                    allFound = false;
+                                    break;
+                                }
+                                currentTotal  += (long) component.getCurrentPrice()  * mapping.getQuantity();
+                                previousTotal += (long) component.getPreviousPrice() * mapping.getQuantity();
+                            }
+                            if (!allFound || previousTotal == 0)
+                            {
+                                continue;
+                            }
+                            priceData = PriceData.of((int) currentTotal, (int) previousTotal);
+                            priceChanges.put(bankId, priceData); // also expose to bank overlay
+                        }
+                        String itemName = itemManager.getItemComposition(bankId).getName();
+                        entries.add(new BankPriceChangesPanel.PanelItemEntry(bankId, itemName, priceData));
+                    }
                     SwingUtilities.invokeLater(() -> panel.updateData(entries));
                 });
             }
@@ -168,6 +202,16 @@ public class BankPriceChangesPlugin extends Plugin
     {
         lastFetch = Instant.EPOCH;
         refreshIfStale();
+    }
+
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event)
+    {
+        if ("bankpricechanges".equals(event.getGroup()) && "timePeriod".equals(event.getKey()))
+        {
+            lastFetch = Instant.EPOCH;
+            refreshIfStale();
+        }
     }
 
     public PriceData getPriceChange(int itemId)
