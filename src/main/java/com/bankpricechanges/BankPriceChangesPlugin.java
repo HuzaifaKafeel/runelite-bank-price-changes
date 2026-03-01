@@ -35,8 +35,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 
 @Slf4j
 @PluginDescriptor(
@@ -76,8 +76,31 @@ public class BankPriceChangesPlugin extends Plugin
     private WikiPriceClient wikiPriceClient;
     private final Map<Integer, PriceData> priceChanges = new ConcurrentHashMap<>();
     private final Set<Integer> bankItemIds = ConcurrentHashMap.newKeySet();
-    private ScheduledExecutorService executor;
-    private Instant lastFetch = Instant.EPOCH;
+    // Bank item IDs extended with ItemMapping component IDs (used for 6h/24h fetch).
+    private final Set<Integer> fetchItemIds = ConcurrentHashMap.newKeySet();
+    private ExecutorService executor;
+
+    // Per-period price cache (overlay reads from priceChanges, which mirrors the active period)
+    private final Map<BankPriceChangesConfig.TimePeriod, Map<Integer, PriceData>>
+        priceCache = new ConcurrentHashMap<>();
+
+    // Per-period panel entries — lets us switch periods without touching the client thread
+    private final Map<BankPriceChangesConfig.TimePeriod,
+        List<BankPriceChangesPanel.PanelItemEntry>>
+        entriesByPeriod = new ConcurrentHashMap<>();
+
+    // Per-period last-fetch timestamps
+    private final Map<BankPriceChangesConfig.TimePeriod, Instant>
+        lastFetchByPeriod = new ConcurrentHashMap<>();
+
+    // Prevents concurrent fetches of the same period
+    private final Set<BankPriceChangesConfig.TimePeriod>
+        fetchingPeriods = ConcurrentHashMap.newKeySet();
+
+    // Manual refresh cooldown
+    private volatile Instant lastManualRefresh = Instant.EPOCH;
+    private static final int MANUAL_REFRESH_COOLDOWN_SECONDS = 30;
+
     private NavigationButton navButton;
     private ItemContainer bankContainer;
 
@@ -92,7 +115,7 @@ public class BankPriceChangesPlugin extends Plugin
     {
         overlayManager.add(overlay);
         wikiPriceClient = new WikiPriceClient(okHttpClient);
-        executor = Executors.newSingleThreadScheduledExecutor();
+        executor = Executors.newFixedThreadPool(4);
 
         navButton = NavigationButton.builder()
             .tooltip("Bank Price Changes")
@@ -113,6 +136,10 @@ public class BankPriceChangesPlugin extends Plugin
         executor.shutdown();
         priceChanges.clear();
         bankItemIds.clear();
+        priceCache.clear();
+        entriesByPeriod.clear();
+        lastFetchByPeriod.clear();
+        fetchingPeriods.clear();
     }
 
     @Subscribe
@@ -123,7 +150,7 @@ public class BankPriceChangesPlugin extends Plugin
             bankContainer = event.getItemContainer();
             rescanBank();
             log.info("Bank container changed ({} unique items), triggering price refresh", bankItemIds.size());
-            refreshIfStale();
+            refreshAllPeriods();
         }
     }
 
@@ -147,77 +174,119 @@ public class BankPriceChangesPlugin extends Plugin
             }
             bankItemIds.add(itemManager.canonicalize(item.getId()));
         }
+        fetchItemIds.clear();
+        fetchItemIds.addAll(bankItemIds);
+        for (Integer bankId : bankItemIds)
+        {
+            Collection<ItemMapping> mappings = ItemMapping.map(bankId);
+            if (mappings != null)
+            {
+                for (ItemMapping m : mappings)
+                {
+                    fetchItemIds.add(m.getTradeableItem());
+                }
+            }
+        }
     }
 
-    void refreshIfStale()
+    void refreshAllPeriods()
     {
-        if (Duration.between(lastFetch, Instant.now()).toMinutes() < 5)
+        for (BankPriceChangesConfig.TimePeriod period : BankPriceChangesConfig.TimePeriod.values())
+        {
+            final BankPriceChangesConfig.TimePeriod p = period;
+            executor.submit(() -> refreshPeriod(p));
+        }
+    }
+
+    private void refreshPeriod(BankPriceChangesConfig.TimePeriod period)
+    {
+        // Staleness guard
+        Instant last = lastFetchByPeriod.getOrDefault(period, Instant.EPOCH);
+        if (Duration.between(last, Instant.now()).toMinutes() < 5)
         {
             return;
         }
-        lastFetch = Instant.now();
-        executor.submit(() ->
+        // Concurrency guard — skip if a fetch is already in-flight for this period
+        if (!fetchingPeriods.add(period))
         {
-            try
-            {
-                Map<Integer, PriceData> data = wikiPriceClient.fetchPriceChanges(config.timePeriod(), bankItemIds);
-                priceChanges.clear();
-                priceChanges.putAll(data);
-                log.info("Fetched price data for {} items", data.size());
+            return;
+        }
+        lastFetchByPeriod.put(period, Instant.now());
+        try
+        {
+            Map<Integer, PriceData> data = wikiPriceClient.fetchPriceChanges(period, fetchItemIds);
+            priceCache.put(period, data);
+            log.info("Fetched price data for {} items ({})", data.size(), period);
 
-                clientThread.invokeLater(() ->
-                {
-                    List<BankPriceChangesPanel.PanelItemEntry> entries = new ArrayList<>();
-                    for (Integer bankId : bankItemIds)
-                    {
-                        PriceData priceData = data.get(bankId);
-                        if (priceData == null)
-                        {
-                            // Resolve untradeable via RuneLite's ItemMapping table
-                            // e.g. Ferocious Gloves → Hydra Leather, Scorching Bow → Tormented Synapse
-                            Collection<ItemMapping> mappings = ItemMapping.map(bankId);
-                            if (mappings == null)
-                            {
-                                continue;
-                            }
-                            long currentTotal = 0;
-                            long previousTotal = 0;
-                            boolean allFound = true;
-                            for (ItemMapping mapping : mappings)
-                            {
-                                PriceData component = data.get(mapping.getTradeableItem());
-                                if (component == null)
-                                {
-                                    allFound = false;
-                                    break;
-                                }
-                                currentTotal  += (long) component.getCurrentPrice()  * mapping.getQuantity();
-                                previousTotal += (long) component.getPreviousPrice() * mapping.getQuantity();
-                            }
-                            if (!allFound || previousTotal == 0)
-                            {
-                                continue;
-                            }
-                            priceData = PriceData.of((int) currentTotal, (int) previousTotal);
-                            priceChanges.put(bankId, priceData); // also expose to bank overlay
-                        }
-                        String itemName = itemManager.getItemComposition(bankId).getName();
-                        entries.add(new BankPriceChangesPanel.PanelItemEntry(bankId, itemName, priceData));
-                    }
-                    SwingUtilities.invokeLater(() -> panel.updateData(entries));
-                });
-            }
-            catch (Exception e)
+            clientThread.invokeLater(() ->
             {
-                log.warn("Failed to fetch price changes", e);
-            }
-        });
+                List<BankPriceChangesPanel.PanelItemEntry> entries = new ArrayList<>();
+                for (Integer bankId : bankItemIds)
+                {
+                    PriceData priceData = data.get(bankId);
+                    if (priceData == null)
+                    {
+                        Collection<ItemMapping> mappings = ItemMapping.map(bankId);
+                        if (mappings == null)
+                        {
+                            continue;
+                        }
+                        long currentTotal = 0;
+                        long previousTotal = 0;
+                        boolean allFound = true;
+                        for (ItemMapping mapping : mappings)
+                        {
+                            PriceData component = data.get(mapping.getTradeableItem());
+                            if (component == null)
+                            {
+                                allFound = false;
+                                break;
+                            }
+                            currentTotal  += (long) component.getCurrentPrice()  * mapping.getQuantity();
+                            previousTotal += (long) component.getPreviousPrice() * mapping.getQuantity();
+                        }
+                        if (!allFound || previousTotal == 0)
+                        {
+                            continue;
+                        }
+                        priceData = PriceData.of((int) currentTotal, (int) previousTotal);
+                        data.put(bankId, priceData); // keep cache consistent
+                    }
+                    String itemName = itemManager.getItemComposition(bankId).getName();
+                    entries.add(new BankPriceChangesPanel.PanelItemEntry(bankId, itemName, priceData));
+                }
+                entriesByPeriod.put(period, entries);
+
+                // Only update the live display if this is the currently selected period
+                if (period == config.timePeriod())
+                {
+                    priceChanges.clear();
+                    priceChanges.putAll(data);
+                    SwingUtilities.invokeLater(() -> panel.updateData(entries));
+                }
+            });
+        }
+        catch (Exception e)
+        {
+            log.warn("Failed to fetch price changes for period {}", period, e);
+        }
+        finally
+        {
+            fetchingPeriods.remove(period);
+        }
     }
 
     public void refreshNow()
     {
-        lastFetch = Instant.EPOCH;
-        refreshIfStale();
+        Instant now = Instant.now();
+        if (Duration.between(lastManualRefresh, now).getSeconds() < MANUAL_REFRESH_COOLDOWN_SECONDS)
+        {
+            log.debug("Manual refresh ignored — cooldown active");
+            return;
+        }
+        lastManualRefresh = now;
+        lastFetchByPeriod.clear();
+        refreshAllPeriods();
     }
 
     @Subscribe
@@ -231,15 +300,31 @@ public class BankPriceChangesPlugin extends Plugin
         switch (event.getKey())
         {
             case "timePeriod":
-                lastFetch = Instant.EPOCH;
-                refreshIfStale();
+                BankPriceChangesConfig.TimePeriod newPeriod = config.timePeriod();
+                Map<Integer, PriceData> cached = priceCache.get(newPeriod);
+                List<BankPriceChangesPanel.PanelItemEntry> cachedEntries = entriesByPeriod.get(newPeriod);
+                Instant lastForPeriod = lastFetchByPeriod.get(newPeriod);
+                boolean fresh = lastForPeriod != null
+                    && Duration.between(lastForPeriod, Instant.now()).toMinutes() < 5;
+
+                if (cached != null && cachedEntries != null && fresh)
+                {
+                    // Instant switch — data already in memory
+                    priceChanges.clear();
+                    priceChanges.putAll(cached);
+                    SwingUtilities.invokeLater(() -> panel.updateData(cachedEntries));
+                }
+                else
+                {
+                    // Cache miss — fetch only this period (others continue in background)
+                    executor.submit(() -> refreshPeriod(newPeriod));
+                }
                 break;
             case "includePlaceholders":
                 clientThread.invokeLater(() ->
                 {
                     rescanBank();
-                    lastFetch = Instant.EPOCH;
-                    refreshIfStale();
+                    refreshAllPeriods();
                 });
                 break;
         }
