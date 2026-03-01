@@ -1,5 +1,6 @@
 package com.bankpricechanges;
 
+import com.google.gson.Gson;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
@@ -62,6 +63,9 @@ public class BankPriceChangesPlugin extends Plugin
     private BankPriceChangesConfig config;
 
     @Inject
+    private Gson gson;
+
+    @Inject
     private OkHttpClient okHttpClient;
 
     @Inject
@@ -114,7 +118,7 @@ public class BankPriceChangesPlugin extends Plugin
     protected void startUp()
     {
         overlayManager.add(overlay);
-        wikiPriceClient = new WikiPriceClient(okHttpClient);
+        wikiPriceClient = new WikiPriceClient(okHttpClient, gson);
         executor = Executors.newFixedThreadPool(4);
 
         navButton = NavigationButton.builder()

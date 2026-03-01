@@ -25,13 +25,14 @@ public class WikiPriceClient
 {
     private static final String BASE_URL = "https://prices.runescape.wiki/api/v1/osrs";
     private static final String USER_AGENT = "bank-price-changes - RuneLite Plugin";
-    private static final Gson GSON = new Gson();
 
+    private final Gson gson;
     private final OkHttpClient httpClient;        // bulk endpoints
     private final OkHttpClient timeseriesClient;  // per-item timeseries
 
-    public WikiPriceClient(OkHttpClient httpClient)
+    public WikiPriceClient(OkHttpClient httpClient, Gson gson)
     {
+        this.gson = gson;
         this.httpClient = httpClient;
         Dispatcher d = new Dispatcher();
         d.setMaxRequestsPerHost(20);
@@ -190,7 +191,7 @@ public class WikiPriceClient
                             return;
                         }
 
-                        JsonObject json = GSON.fromJson(response.body().charStream(), JsonObject.class);
+                        JsonObject json = gson.fromJson(response.body().charStream(), JsonObject.class);
                         if (json == null || !json.has("data"))
                         {
                             return;
@@ -287,7 +288,7 @@ public class WikiPriceClient
                 return null;
             }
 
-            return GSON.fromJson(response.body().charStream(), JsonObject.class);
+            return gson.fromJson(response.body().charStream(), JsonObject.class);
         }
     }
 }
