@@ -79,15 +79,15 @@ public class BankPriceChangesPanel extends PluginPanel
         title.setForeground(Color.WHITE);
         title.setHorizontalAlignment(SwingConstants.CENTER);
         title.setBorder(new EmptyBorder(8, 0, 6, 0));
-        title.setFont(title.getFont().deriveFont(Font.BOLD, 12f));
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
 
         // ── Tab strip (Gainers / Losers) ──────────────────────
         gainersTab = new JLabel("GAINERS", SwingConstants.CENTER);
         losersTab = new JLabel("LOSERS", SwingConstants.CENTER);
         gainersTab.setOpaque(true);
         losersTab.setOpaque(true);
-        gainersTab.setFont(gainersTab.getFont().deriveFont(Font.BOLD, 12f));
-        losersTab.setFont(losersTab.getFont().deriveFont(Font.BOLD, 12f));
+        gainersTab.setFont(gainersTab.getFont().deriveFont(Font.BOLD, 14f));
+        losersTab.setFont(losersTab.getFont().deriveFont(Font.BOLD, 14f));
         gainersTab.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         losersTab.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
@@ -243,11 +243,9 @@ public class BankPriceChangesPanel extends PluginPanel
         // ── Footer ─────────────────────────────────────────────
         updatedLabel = new JLabel("Updated: --:--");
         updatedLabel.setForeground(Color.GRAY);
-        updatedLabel.setFont(updatedLabel.getFont().deriveFont(11f));
+        updatedLabel.setFont(updatedLabel.getFont().deriveFont(13f));
 
-        JButton refreshBtn = new JButton("\u21BB");
-        refreshBtn.setFocusPainted(false);
-        refreshBtn.setFont(refreshBtn.getFont().deriveFont(14f));
+        JButton refreshBtn = makeControlButton("Refresh");
         refreshBtn.setToolTipText("Refresh Now");
         refreshBtn.addActionListener(e -> plugin.refreshNow());
 
@@ -297,7 +295,7 @@ public class BankPriceChangesPanel extends PluginPanel
     {
         JButton btn = new JButton(text);
         btn.setFocusPainted(false);
-        btn.setFont(btn.getFont().deriveFont(11f));
+        btn.setFont(btn.getFont().deriveFont(13f));
         btn.setMargin(new Insets(2, 6, 2, 6));
         btn.setBackground(ColorScheme.DARKER_GRAY_COLOR);
         btn.setForeground(Color.GRAY);
@@ -312,7 +310,7 @@ public class BankPriceChangesPanel extends PluginPanel
         field.setBackground(ColorScheme.DARKER_GRAY_COLOR);
         field.setForeground(Color.WHITE);
         field.setCaretColor(Color.WHITE);
-        field.setFont(field.getFont().deriveFont(11f));
+        field.setFont(field.getFont().deriveFont(13f));
         field.setBorder(BorderFactory.createLineBorder(ColorScheme.MEDIUM_GRAY_COLOR, 1));
         return field;
     }
@@ -321,7 +319,7 @@ public class BankPriceChangesPanel extends PluginPanel
     {
         JLabel lbl = new JLabel(text);
         lbl.setForeground(Color.GRAY);
-        lbl.setFont(lbl.getFont().deriveFont(11f));
+        lbl.setFont(lbl.getFont().deriveFont(13f));
         return lbl;
     }
 
@@ -455,7 +453,7 @@ public class BankPriceChangesPanel extends PluginPanel
         itemListPanel.removeAll();
 
         allEntries.stream()
-            .filter(e -> showGainers ? e.priceData.getChange() >= 0 : e.priceData.getChange() < 0)
+            .filter(e -> showGainers ? e.priceData.getChange() > 0 : e.priceData.getChange() < 0)
             .filter(e -> Math.abs(e.priceData.getChangePct()) >= config.minThreshold())
             .filter(e -> Math.abs(e.priceData.getChange()) >= config.minGpThreshold())
             .sorted(comparator)
@@ -508,7 +506,7 @@ public class BankPriceChangesPanel extends PluginPanel
         // CENTER: item name
         JLabel nameLabel = new JLabel(entry.itemName);
         nameLabel.setForeground(Color.WHITE);
-        nameLabel.setFont(nameLabel.getFont().deriveFont(12f));
+        nameLabel.setFont(nameLabel.getFont().deriveFont(14f));
 
         // EAST: change value
         String sign = isGain ? "+" : "";
@@ -518,7 +516,7 @@ public class BankPriceChangesPanel extends PluginPanel
 
         JLabel valueLabel = new JLabel(value);
         valueLabel.setForeground(accentColor);
-        valueLabel.setFont(valueLabel.getFont().deriveFont(Font.BOLD, 12f));
+        valueLabel.setFont(valueLabel.getFont().deriveFont(Font.BOLD, 14f));
         valueLabel.setBorder(new EmptyBorder(0, 0, 0, 6));
 
         row.add(west, BorderLayout.WEST);

@@ -11,9 +11,6 @@ public class PriceFormatter
                 return sign + String.format("%.1f%%", data.getChangePct());
             case GP_AMOUNT:
                 return sign + formatGp(data.getChange());
-            case BOTH:
-                return sign + String.format("%.1f%%", data.getChangePct())
-                    + " " + sign + formatGp(data.getChange());
             default:
                 return "";
         }
