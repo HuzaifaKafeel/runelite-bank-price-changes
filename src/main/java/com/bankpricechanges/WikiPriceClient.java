@@ -13,12 +13,13 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 @Slf4j
 public class WikiPriceClient
@@ -158,12 +159,15 @@ public class WikiPriceClient
             return result;
         }
 
-        CountDownLatch latch = new CountDownLatch(currentPrices.size());
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
 
         for (Map.Entry<Integer, Integer> entry : currentPrices.entrySet())
         {
             int itemId = entry.getKey();
             int currentPrice = entry.getValue();
+
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            futures.add(future);
 
             String url = BASE_URL + "/timeseries?timestep=" + timestep + "&id=" + itemId;
             Request request = new Request.Builder()
@@ -177,7 +181,7 @@ public class WikiPriceClient
                 public void onFailure(Call call, IOException e)
                 {
                     log.warn("Timeseries request failed for item {}", itemId, e);
-                    latch.countDown();
+                    future.complete(null);
                 }
 
                 @Override
@@ -215,21 +219,13 @@ public class WikiPriceClient
                     finally
                     {
                         response.close();
-                        latch.countDown();
+                        future.complete(null);
                     }
                 }
             });
         }
 
-        try
-        {
-            latch.await(30, TimeUnit.SECONDS);
-        }
-        catch (InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            log.warn("Timeseries fetch interrupted");
-        }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
         return result;
     }
