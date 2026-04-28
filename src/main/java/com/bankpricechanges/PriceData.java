@@ -5,17 +5,26 @@ import lombok.Value;
 @Value
 public class PriceData
 {
-    int currentPrice;
-    int previousPrice;
-    int change;
-    double changePct;
+    int currentHigh;
+    int currentLow;
+    int previousHigh;
+    int previousLow;
 
-    public static PriceData of(int currentPrice, int previousPrice)
+    public int getChange(BankPriceChangesConfig.PriceMode mode)
     {
-        int change = currentPrice - previousPrice;
-        double changePct = previousPrice != 0
-            ? (change / (double) previousPrice) * 100.0
-            : 0.0;
-        return new PriceData(currentPrice, previousPrice, change, changePct);
+        int cur  = mode == BankPriceChangesConfig.PriceMode.HIGH ? currentHigh  : currentLow;
+        int prev = mode == BankPriceChangesConfig.PriceMode.HIGH ? previousHigh : previousLow;
+        return cur - prev;
+    }
+
+    public double getChangePct(BankPriceChangesConfig.PriceMode mode)
+    {
+        int prev = mode == BankPriceChangesConfig.PriceMode.HIGH ? previousHigh : previousLow;
+        return prev != 0 ? (getChange(mode) / (double) prev) * 100.0 : 0.0;
+    }
+
+    public static PriceData of(int currentHigh, int currentLow, int previousHigh, int previousLow)
+    {
+        return new PriceData(currentHigh, currentLow, previousHigh, previousLow);
     }
 }

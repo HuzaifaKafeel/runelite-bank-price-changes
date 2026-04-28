@@ -7,11 +7,24 @@ Answers the question: "What happened to my bank value? Why is it up/down?!"
 
 ## Features
 
-- **Bank overlays** — each item shows its price change (% or GP) in colour-coded text
-- **Side panel** — Gainers / Losers tabs, sortable by % or GP, configurable item count
-- **Time periods** — toggle between different price windows
-- **GP threshold** — filter out items below a minimum absolute change
-- **% threshold** — filter out items below a minimum percentage change
-- **Placeholder support** — optionally include bank placeholders
-- **Manual refresh** — refresh button with 30-second cooldown to avoid API spam
-- Prices sourced from the [OSRS Wiki Prices API](https://prices.runescape.wiki/api/v1/osrs)
+### Bank Overlay
+Each bank item shows its price change in colour-coded text (green = up, red = down).
+Choose between GP or % display, and toggle the overlay on or off from the RuneLite config panel.
+
+### Side Panel
+A panel showing your top **Gainers** or **Losers** over any time window from 5 minutes to 1 year.
+
+Each item card shows:
+- **Now** — the current GE price
+- **Then** — the price at the start of the selected time window
+- **Change** — how much the price moved (GP or %)
+
+Configurable options:
+- **Display** — sort and display by GP change or % change
+- **Items** — show 5 or 10 items
+- **Price** — sell offer (low) or buy offer (high)
+- **Timestep** — 5 min, 1 hour, 6 hours, 24 hours, 1 week, 1 month, 1 year
+- **Thresholds** — hide items below a minimum GP or % change
+- **Placeholders** — include or exclude bank placeholder items
+
+Hit **Refresh** in the panel footer to fetch the latest prices immediately.

@@ -38,6 +38,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @PluginDescriptor(
@@ -47,63 +48,50 @@ import java.util.concurrent.Executors;
 )
 public class BankPriceChangesPlugin extends Plugin
 {
-    @Inject
-    private Client client;
-
-    @Inject
-    private ItemManager itemManager;
-
-    @Inject
-    private OverlayManager overlayManager;
-
-    @Inject
-    private BankPriceChangesOverlay overlay;
-
-    @Inject
-    private BankPriceChangesConfig config;
-
-    @Inject
-    private Gson gson;
-
-    @Inject
-    private OkHttpClient okHttpClient;
-
-    @Inject
-    private ClientToolbar clientToolbar;
-
-    @Inject
-    private ClientThread clientThread;
-
-    @Inject
-    private BankPriceChangesPanel panel;
+    @Inject private Client client;
+    @Inject private ItemManager itemManager;
+    @Inject private OverlayManager overlayManager;
+    @Inject private BankPriceChangesOverlay overlay;
+    @Inject private BankPriceChangesConfig config;
+    @Inject private Gson gson;
+    @Inject private OkHttpClient okHttpClient;
+    @Inject private ClientToolbar clientToolbar;
+    @Inject private ClientThread clientThread;
+    @Inject private BankPriceChangesPanel panel;
 
     private WikiPriceClient wikiPriceClient;
     private final Map<Integer, PriceData> priceChanges = new ConcurrentHashMap<>();
     private final Set<Integer> bankItemIds = ConcurrentHashMap.newKeySet();
-    // Bank item IDs extended with ItemMapping component IDs (used for 6h/24h fetch).
     private final Set<Integer> fetchItemIds = ConcurrentHashMap.newKeySet();
     private ExecutorService executor;
 
-    // Per-period price cache (overlay reads from priceChanges, which mirrors the active period)
+    // Per-period price cache
     private final Map<BankPriceChangesConfig.TimePeriod, Map<Integer, PriceData>>
         priceCache = new ConcurrentHashMap<>();
 
-    // Per-period panel entries — lets us switch periods without touching the client thread
-    private final Map<BankPriceChangesConfig.TimePeriod,
-        List<BankPriceChangesPanel.PanelItemEntry>>
+    // Per-period panel entries
+    private final Map<BankPriceChangesConfig.TimePeriod, List<BankPriceChangesPanel.PanelItemEntry>>
         entriesByPeriod = new ConcurrentHashMap<>();
 
-    // Per-period last-fetch timestamps
+    // Last-fetch timestamps — keyed by period for bulk, and by a sentinel for the two timeseries groups
     private final Map<BankPriceChangesConfig.TimePeriod, Instant>
         lastFetchByPeriod = new ConcurrentHashMap<>();
 
-    // Prevents concurrent fetches of the same period
+    // In-flight guards
+    private final AtomicBoolean fetchingTimeseries = new AtomicBoolean(false);
     private final Set<BankPriceChangesConfig.TimePeriod>
-        fetchingPeriods = ConcurrentHashMap.newKeySet();
+        fetchingBulk = ConcurrentHashMap.newKeySet();
 
-    // Manual refresh cooldown
     private volatile Instant lastManualRefresh = Instant.EPOCH;
     private static final int MANUAL_REFRESH_COOLDOWN_SECONDS = 30;
+    private static final int STALE_MINUTES = 5;
+
+    // Sentinel period used to track staleness of the shared 6h timeseries fetch
+    private static final BankPriceChangesConfig.TimePeriod SENTINEL_6H =
+        BankPriceChangesConfig.TimePeriod.SIX_HOURS;
+    // Sentinel period used to track staleness of the shared daily timeseries fetch (24h/1w/1m/1y)
+    private static final BankPriceChangesConfig.TimePeriod SENTINEL_DAILY =
+        BankPriceChangesConfig.TimePeriod.TWENTY_FOUR_HOURS;
 
     private NavigationButton navButton;
     private ItemContainer bankContainer;
@@ -143,7 +131,6 @@ public class BankPriceChangesPlugin extends Plugin
         priceCache.clear();
         entriesByPeriod.clear();
         lastFetchByPeriod.clear();
-        fetchingPeriods.clear();
     }
 
     @Subscribe
@@ -160,17 +147,11 @@ public class BankPriceChangesPlugin extends Plugin
 
     void rescanBank()
     {
-        if (bankContainer == null)
-        {
-            return;
-        }
+        if (bankContainer == null) return;
         bankItemIds.clear();
         for (Item item : bankContainer.getItems())
         {
-            if (item.getId() < 0)
-            {
-                continue;
-            }
+            if (item.getId() < 0) continue;
             if (!config.includePlaceholders()
                     && itemManager.getItemComposition(item.getId()).getPlaceholderTemplateId() != -1)
             {
@@ -195,89 +176,143 @@ public class BankPriceChangesPlugin extends Plugin
 
     void refreshAllPeriods()
     {
-        for (BankPriceChangesConfig.TimePeriod period : BankPriceChangesConfig.TimePeriod.values())
-        {
-            final BankPriceChangesConfig.TimePeriod p = period;
-            executor.submit(() -> refreshPeriod(p));
-        }
+        executor.submit(this::refreshBulkPeriod5m);
+        executor.submit(this::refreshBulkPeriod1h);
+        executor.submit(this::refreshSixHourPeriod);
+        executor.submit(this::refreshDailyPeriods);
     }
 
-    private void refreshPeriod(BankPriceChangesConfig.TimePeriod period)
+    private void refreshBulkPeriod5m()
     {
-        // Staleness guard
+        refreshBulkPeriod(BankPriceChangesConfig.TimePeriod.FIVE_MIN);
+    }
+
+    private void refreshBulkPeriod1h()
+    {
+        refreshBulkPeriod(BankPriceChangesConfig.TimePeriod.ONE_HOUR);
+    }
+
+    private void refreshBulkPeriod(BankPriceChangesConfig.TimePeriod period)
+    {
         Instant last = lastFetchByPeriod.getOrDefault(period, Instant.EPOCH);
-        if (Duration.between(last, Instant.now()).toMinutes() < 5)
-        {
-            return;
-        }
-        // Concurrency guard — skip if a fetch is already in-flight for this period
-        if (!fetchingPeriods.add(period))
-        {
-            return;
-        }
+        if (Duration.between(last, Instant.now()).toMinutes() < STALE_MINUTES) return;
+        if (!fetchingBulk.add(period)) return;
         lastFetchByPeriod.put(period, Instant.now());
         try
         {
-            Map<Integer, PriceData> data = wikiPriceClient.fetchPriceChanges(period, fetchItemIds);
+            Map<Integer, PriceData> data = wikiPriceClient.fetchBulkPeriod(period);
             priceCache.put(period, data);
-            log.info("Fetched price data for {} items ({})", data.size(), period);
-
-            clientThread.invokeLater(() ->
-            {
-                List<BankPriceChangesPanel.PanelItemEntry> entries = new ArrayList<>();
-                for (Integer bankId : bankItemIds)
-                {
-                    PriceData priceData = data.get(bankId);
-                    if (priceData == null)
-                    {
-                        Collection<ItemMapping> mappings = ItemMapping.map(bankId);
-                        if (mappings == null)
-                        {
-                            continue;
-                        }
-                        long currentTotal = 0;
-                        long previousTotal = 0;
-                        boolean allFound = true;
-                        for (ItemMapping mapping : mappings)
-                        {
-                            PriceData component = data.get(mapping.getTradeableItem());
-                            if (component == null)
-                            {
-                                allFound = false;
-                                break;
-                            }
-                            currentTotal  += (long) component.getCurrentPrice()  * mapping.getQuantity();
-                            previousTotal += (long) component.getPreviousPrice() * mapping.getQuantity();
-                        }
-                        if (!allFound || previousTotal == 0)
-                        {
-                            continue;
-                        }
-                        priceData = PriceData.of((int) currentTotal, (int) previousTotal);
-                        data.put(bankId, priceData); // keep cache consistent
-                    }
-                    String itemName = itemManager.getItemComposition(bankId).getName();
-                    entries.add(new BankPriceChangesPanel.PanelItemEntry(bankId, itemName, priceData));
-                }
-                entriesByPeriod.put(period, entries);
-
-                // Only update the live display if this is the currently selected period
-                if (period == config.timePeriod())
-                {
-                    priceChanges.clear();
-                    priceChanges.putAll(data);
-                    SwingUtilities.invokeLater(() -> panel.updateData(entries));
-                }
-            });
+            log.info("Fetched bulk price data for {} items ({})", data.size(), period);
+            pushToPanel(period, data);
         }
         catch (Exception e)
         {
-            log.warn("Failed to fetch price changes for period {}", period, e);
+            log.warn("Failed to fetch bulk period {}", period, e);
         }
         finally
         {
-            fetchingPeriods.remove(period);
+            fetchingBulk.remove(period);
         }
+    }
+
+    private void refreshSixHourPeriod()
+    {
+        Instant last = lastFetchByPeriod.getOrDefault(SENTINEL_6H, Instant.EPOCH);
+        if (Duration.between(last, Instant.now()).toMinutes() < STALE_MINUTES) return;
+        if (!fetchingTimeseries.compareAndSet(false, true)) return;
+        lastFetchByPeriod.put(SENTINEL_6H, Instant.now());
+        try
+        {
+            Set<Integer> ids = Set.copyOf(fetchItemIds);
+            Map<Integer, PriceData> data = wikiPriceClient.fetchSixHourPeriod(ids);
+            priceCache.put(BankPriceChangesConfig.TimePeriod.SIX_HOURS, data);
+            log.info("Fetched 6h timeseries for {} items", data.size());
+            pushToPanel(BankPriceChangesConfig.TimePeriod.SIX_HOURS, data);
+        }
+        catch (Exception e)
+        {
+            log.warn("Failed to fetch 6h timeseries", e);
+        }
+        finally
+        {
+            fetchingTimeseries.set(false);
+        }
+    }
+
+    private void refreshDailyPeriods()
+    {
+        Instant last = lastFetchByPeriod.getOrDefault(SENTINEL_DAILY, Instant.EPOCH);
+        if (Duration.between(last, Instant.now()).toMinutes() < STALE_MINUTES) return;
+        // Use a separate atomic for daily to allow 6h and daily to run concurrently
+        // Simple staleness + period-keyed guard is enough here since executor is multi-threaded
+        lastFetchByPeriod.put(SENTINEL_DAILY, Instant.now());
+        try
+        {
+            Set<Integer> ids = Set.copyOf(fetchItemIds);
+            Map<BankPriceChangesConfig.TimePeriod, Map<Integer, PriceData>> allData =
+                wikiPriceClient.fetchDailyPeriods(ids);
+
+            for (Map.Entry<BankPriceChangesConfig.TimePeriod, Map<Integer, PriceData>> entry
+                : allData.entrySet())
+            {
+                priceCache.put(entry.getKey(), entry.getValue());
+                log.info("Fetched daily timeseries ({}) for {} items",
+                    entry.getKey(), entry.getValue().size());
+                pushToPanel(entry.getKey(), entry.getValue());
+            }
+        }
+        catch (Exception e)
+        {
+            log.warn("Failed to fetch daily timeseries periods", e);
+        }
+    }
+
+    /** Resolves component-item names on the client thread, then pushes entries to the panel. */
+    private void pushToPanel(BankPriceChangesConfig.TimePeriod period, Map<Integer, PriceData> data)
+    {
+        clientThread.invokeLater(() ->
+        {
+            List<BankPriceChangesPanel.PanelItemEntry> entries = new ArrayList<>();
+            for (Integer bankId : bankItemIds)
+            {
+                PriceData priceData = data.get(bankId);
+                if (priceData == null)
+                {
+                    Collection<ItemMapping> mappings = ItemMapping.map(bankId);
+                    if (mappings == null) continue;
+
+                    long curHighTotal = 0, curLowTotal = 0;
+                    long prevHighTotal = 0, prevLowTotal = 0;
+                    boolean allFound = true;
+
+                    for (ItemMapping mapping : mappings)
+                    {
+                        PriceData component = data.get(mapping.getTradeableItem());
+                        if (component == null) { allFound = false; break; }
+                        curHighTotal  += (long) component.getCurrentHigh()  * mapping.getQuantity();
+                        curLowTotal   += (long) component.getCurrentLow()   * mapping.getQuantity();
+                        prevHighTotal += (long) component.getPreviousHigh() * mapping.getQuantity();
+                        prevLowTotal  += (long) component.getPreviousLow()  * mapping.getQuantity();
+                    }
+                    if (!allFound || (prevHighTotal == 0 && prevLowTotal == 0)) continue;
+                    priceData = PriceData.of(
+                        (int) curHighTotal, (int) curLowTotal,
+                        (int) prevHighTotal, (int) prevLowTotal
+                    );
+                    data.put(bankId, priceData);
+                }
+                String itemName = itemManager.getItemComposition(bankId).getName();
+                entries.add(new BankPriceChangesPanel.PanelItemEntry(bankId, itemName, priceData));
+            }
+            entriesByPeriod.put(period, entries);
+
+            if (period == config.timePeriod())
+            {
+                priceChanges.clear();
+                priceChanges.putAll(data);
+                SwingUtilities.invokeLater(() -> panel.updateData(entries));
+            }
+        });
     }
 
     public void refreshNow()
@@ -296,32 +331,29 @@ public class BankPriceChangesPlugin extends Plugin
     @Subscribe
     public void onConfigChanged(ConfigChanged event)
     {
-        if (!"bankpricechanges".equals(event.getGroup()))
-        {
-            return;
-        }
+        if (!"bankpricechanges".equals(event.getGroup())) return;
+
         SwingUtilities.invokeLater(() -> panel.syncFromConfig());
+
         switch (event.getKey())
         {
             case "timePeriod":
                 BankPriceChangesConfig.TimePeriod newPeriod = config.timePeriod();
                 Map<Integer, PriceData> cached = priceCache.get(newPeriod);
                 List<BankPriceChangesPanel.PanelItemEntry> cachedEntries = entriesByPeriod.get(newPeriod);
-                Instant lastForPeriod = lastFetchByPeriod.get(newPeriod);
+                Instant lastForPeriod = lastFetchByPeriod.get(getStalenessKey(newPeriod));
                 boolean fresh = lastForPeriod != null
-                    && Duration.between(lastForPeriod, Instant.now()).toMinutes() < 5;
+                    && Duration.between(lastForPeriod, Instant.now()).toMinutes() < STALE_MINUTES;
 
                 if (cached != null && cachedEntries != null && fresh)
                 {
-                    // Instant switch — data already in memory
                     priceChanges.clear();
                     priceChanges.putAll(cached);
                     SwingUtilities.invokeLater(() -> panel.updateData(cachedEntries));
                 }
                 else
                 {
-                    // Cache miss — fetch only this period (others continue in background)
-                    executor.submit(() -> refreshPeriod(newPeriod));
+                    executor.submit(() -> fetchPeriod(newPeriod));
                 }
                 break;
             case "includePlaceholders":
@@ -331,6 +363,30 @@ public class BankPriceChangesPlugin extends Plugin
                     refreshAllPeriods();
                 });
                 break;
+        }
+    }
+
+    /** Returns the staleness-tracking key for a given period. */
+    private BankPriceChangesConfig.TimePeriod getStalenessKey(BankPriceChangesConfig.TimePeriod period)
+    {
+        switch (period)
+        {
+            case FIVE_MIN:      return BankPriceChangesConfig.TimePeriod.FIVE_MIN;
+            case ONE_HOUR:      return BankPriceChangesConfig.TimePeriod.ONE_HOUR;
+            case SIX_HOURS:     return SENTINEL_6H;
+            default:            return SENTINEL_DAILY; // 24h, 1w, 1m, 1y
+        }
+    }
+
+    /** Fetches only the group containing the given period (used on cache miss after period switch). */
+    private void fetchPeriod(BankPriceChangesConfig.TimePeriod period)
+    {
+        switch (period)
+        {
+            case FIVE_MIN:  refreshBulkPeriod(BankPriceChangesConfig.TimePeriod.FIVE_MIN);  break;
+            case ONE_HOUR:  refreshBulkPeriod(BankPriceChangesConfig.TimePeriod.ONE_HOUR);  break;
+            case SIX_HOURS: refreshSixHourPeriod(); break;
+            default:        refreshDailyPeriods();  break;
         }
     }
 
@@ -345,13 +401,11 @@ public class BankPriceChangesPlugin extends Plugin
         Graphics2D g = image.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        // Draw a simple gold bar-chart icon
-        g.setColor(new Color(200, 160, 0)); // gold
-        g.fillRect(1, 10, 3, 5);            // short bar (left)
-        g.fillRect(6, 6, 3, 9);             // medium bar (middle)
-        g.fillRect(11, 2, 3, 13);           // tall bar (right)
+        g.setColor(new Color(200, 160, 0));
+        g.fillRect(1, 10, 3, 5);
+        g.fillRect(6, 6, 3, 9);
+        g.fillRect(11, 2, 3, 13);
 
-        // Highlight
         g.setColor(new Color(255, 220, 80));
         g.fillRect(1, 10, 1, 5);
         g.fillRect(6, 6, 1, 9);

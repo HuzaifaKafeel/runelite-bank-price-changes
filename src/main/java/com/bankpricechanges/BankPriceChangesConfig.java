@@ -7,11 +7,10 @@ import net.runelite.client.config.ConfigItem;
 @ConfigGroup("bankpricechanges")
 public interface BankPriceChangesConfig extends Config
 {
-    enum DisplayMode
+    enum PriceMode
     {
-        PERCENTAGE,
-        GP_AMOUNT,
-        BOTH
+        HIGH,
+        LOW
     }
 
     enum TimePeriod
@@ -19,50 +18,23 @@ public interface BankPriceChangesConfig extends Config
         FIVE_MIN("5m"),
         ONE_HOUR("1h"),
         SIX_HOURS("6h"),
-        TWENTY_FOUR_HOURS("24h");
+        TWENTY_FOUR_HOURS("24h"),
+        ONE_WEEK("1w"),
+        ONE_MONTH("1mo"),
+        ONE_YEAR("1yr");
 
-        private final String name;
+        private final String label;
 
-        TimePeriod(String name)
+        TimePeriod(String label)
         {
-            this.name = name;
+            this.label = label;
         }
 
         @Override
         public String toString()
         {
-            return name;
+            return label;
         }
-    }
-
-    @ConfigItem(
-        keyName = "displayMode",
-        name = "Display Mode",
-        description = "Show price change as percentage, GP amount, or both"
-    )
-    default DisplayMode displayMode()
-    {
-        return DisplayMode.PERCENTAGE;
-    }
-
-    @ConfigItem(
-        keyName = "minThreshold",
-        name = "Minimum Change %",
-        description = "Only show overlay on items with at least this % change"
-    )
-    default double minThreshold()
-    {
-        return 0.0;
-    }
-
-    @ConfigItem(
-        keyName = "timePeriod",
-        name = "Time Period",
-        description = "Lookback period for price comparison"
-    )
-    default TimePeriod timePeriod()
-    {
-        return TimePeriod.TWENTY_FOUR_HOURS;
     }
 
     enum PanelItemCount
@@ -84,34 +56,35 @@ public interface BankPriceChangesConfig extends Config
         }
     }
 
-    @ConfigItem(
-        keyName = "panelItemCount",
-        name = "Panel Item Count",
-        description = "Top items shown in the side panel",
-        position = 3
-    )
-    default PanelItemCount panelItemCount()
-    {
-        return PanelItemCount.FIVE;
-    }
+    // ── Hidden panel state (persisted, not shown in config panel UI) ─────────
+
+    @ConfigItem(keyName = "showByPercent",      name = "", description = "", hidden = true)
+    default boolean showByPercent() { return false; }
+
+    @ConfigItem(keyName = "priceMode",          name = "", description = "", hidden = true)
+    default PriceMode priceMode() { return PriceMode.LOW; }
+
+    @ConfigItem(keyName = "minThreshold",       name = "", description = "", hidden = true)
+    default double minThreshold() { return 0.0; }
+
+    @ConfigItem(keyName = "timePeriod",         name = "", description = "", hidden = true)
+    default TimePeriod timePeriod() { return TimePeriod.TWENTY_FOUR_HOURS; }
+
+    @ConfigItem(keyName = "panelItemCount",     name = "", description = "", hidden = true)
+    default PanelItemCount panelItemCount() { return PanelItemCount.FIVE; }
+
+    @ConfigItem(keyName = "includePlaceholders",name = "", description = "", hidden = true)
+    default boolean includePlaceholders() { return true; }
+
+    @ConfigItem(keyName = "minGpThreshold",     name = "", description = "", hidden = true)
+    default int minGpThreshold() { return 0; }
+
+    // ── Visible config panel setting ──────────────────────────────────────────
 
     @ConfigItem(
-        keyName = "includePlaceholders",
-        name = "Include Placeholders",
-        description = "Show price changes for bank placeholder items"
+        keyName = "showBankOverlay",
+        name = "Show Bank Overlay",
+        description = "Show price change labels on bank items"
     )
-    default boolean includePlaceholders()
-    {
-        return true;
-    }
-
-    @ConfigItem(
-        keyName = "minGpThreshold",
-        name = "Minimum Change (GP)",
-        description = "Only show overlay on items with at least this GP change (absolute value)"
-    )
-    default int minGpThreshold()
-    {
-        return 0;
-    }
+    default boolean showBankOverlay() { return true; }
 }

@@ -28,6 +28,11 @@ public class BankPriceChangesOverlay extends WidgetItemOverlay
     @Override
     public void renderItemOverlay(Graphics2D graphics, int itemId, WidgetItem widgetItem)
     {
+        if (!config.showBankOverlay())
+        {
+            return;
+        }
+
         if (!config.includePlaceholders()
                 && itemManager.getItemComposition(itemId).getPlaceholderTemplateId() != -1)
         {
@@ -40,37 +45,29 @@ public class BankPriceChangesOverlay extends WidgetItemOverlay
             return;
         }
 
-        if (Math.abs(data.getChangePct()) < config.minThreshold())
+        BankPriceChangesConfig.PriceMode priceMode = config.priceMode();
+
+        if (Math.abs(data.getChangePct(priceMode)) < config.minThreshold())
         {
             return;
         }
 
-        if (Math.abs(data.getChange()) < config.minGpThreshold())
+        if (Math.abs(data.getChange(priceMode)) < config.minGpThreshold())
         {
             return;
         }
 
-        Color color = data.getChange() >= 0 ? Color.GREEN : Color.RED;
-        String sign = data.getChange() >= 0 ? "+" : "";
+        int change = data.getChange(priceMode);
+        Color color = change >= 0 ? Color.GREEN : Color.RED;
+        String sign = change >= 0 ? "+" : "";
+
+        String text = config.showByPercent()
+            ? sign + String.format("%.1f%%", data.getChangePct(priceMode))
+            : sign + PriceFormatter.formatGp(change);
 
         Rectangle bounds = widgetItem.getCanvasBounds();
-        int x = bounds.x + 1;
-        int y = bounds.y + bounds.height - 1;
-
         graphics.setFont(FontManager.getRunescapeSmallFont());
-
-        if (config.displayMode() == BankPriceChangesConfig.DisplayMode.BOTH)
-        {
-            String gpText  = sign + PriceFormatter.formatGp(data.getChange());
-            String pctText = sign + String.format("%.1f%%", data.getChangePct());
-            int lineHeight = graphics.getFontMetrics().getHeight();
-            drawText(graphics, gpText, color, x, y);
-            drawText(graphics, pctText, color, x, y - lineHeight);
-        }
-        else
-        {
-            drawText(graphics, formatChange(data, config.displayMode()), color, x, y);
-        }
+        drawText(graphics, text, color, bounds.x + 1, bounds.y + bounds.height - 1);
     }
 
     private void drawText(Graphics2D graphics, String text, Color color, int x, int y)
@@ -79,15 +76,5 @@ public class BankPriceChangesOverlay extends WidgetItemOverlay
         graphics.drawString(text, x + 1, y + 1);
         graphics.setColor(color);
         graphics.drawString(text, x, y);
-    }
-
-    private String formatChange(PriceData data, BankPriceChangesConfig.DisplayMode mode)
-    {
-        return PriceFormatter.formatChange(data, mode);
-    }
-
-    private String formatGp(int amount)
-    {
-        return PriceFormatter.formatGp(amount);
     }
 }
